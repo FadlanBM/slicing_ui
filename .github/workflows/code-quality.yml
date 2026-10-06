@@ -1,0 +1,74 @@
+name: Code Quality & CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  code-quality:
+    name: Code Quality & Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Print Flutter & Dart version
+        run: flutter --version
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Verify code formatting
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Run Flutter analyzer (linter & static analysis)
+        run: flutter analyze --fatal-infos --fatal-warnings
+
+      - name: Run unit & widget tests with coverage
+        run: flutter test --coverage
+
+      - name: Generate Code Quality Summary
+        if: always()
+        run: |
+          echo "## 📊 Code Quality & Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f coverage/lcov.info ]; then
+            lines_hit=$(grep -E '^DA:[0-9]+,[1-9][0-9]*' coverage/lcov.info | wc -l || echo 0)
+            lines_total=$(grep -E '^DA:[0-9]+,' coverage/lcov.info | wc -l || echo 0)
+            if [ "$lines_total" -gt 0 ]; then
+              pct=$(awk "BEGIN {printf \"%.2f\", ($lines_hit/$lines_total)*100}")
+              echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+              echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+              echo "| Total Executable Lines | $lines_total |" >> $GITHUB_STEP_SUMMARY
+              echo "| Lines Covered | $lines_hit |" >> $GITHUB_STEP_SUMMARY
+              echo "| Test Coverage | **${pct}%** |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "No executable lines found in coverage report." >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "No coverage file generated." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload Test Coverage Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-coverage-report
+          path: coverage/lcov.info
+          if-no-files-found: ignore
